@@ -3,6 +3,7 @@ import { useAppState } from '../lib/store'
 import { WEEKDAYS, formatDateJa, toDateKey, todayKey } from '../lib/date'
 import { nextProgramDayIndex, workoutBodyParts } from '../lib/stats'
 import { startProgramDay } from './ProgramsView'
+import { WorkoutSummary } from '../components/WorkoutSummary'
 
 export function CalendarView({ onOpenDate }: { onOpenDate: (date: string) => void }) {
   const state = useAppState()
@@ -75,27 +76,7 @@ export function CalendarView({ onOpenDate }: { onOpenDate: (date: string) => voi
             {sel?.exercises.length ? '編集' : '記録する'}
           </button>
         </div>
-        {sel?.exercises.length ? (
-          <ul className="day-summary">
-            {sel.exercises.map((we) => {
-              const ex = state.exercises.find((e) => e.id === we.exerciseId)
-              const sets = we.sets.filter((s) => s.reps)
-              return (
-                <li key={we.id}>
-                  <span className={`dot part-${ex?.bodyPart}`} />
-                  <b>{ex?.name}</b>
-                  <span className="muted small">
-                    {' '}
-                    {sets.map((s) => `${s.weight ?? 0}×${s.reps}${s.rpe ? `@${s.rpe}` : ''}`).join(' / ')}
-                  </span>
-                </li>
-              )
-            })}
-          </ul>
-        ) : (
-          <p className="muted small">記録はありません</p>
-        )}
-        {sel?.note && <p className="small note">📝 {sel.note}</p>}
+        {sel?.exercises.length ? <WorkoutSummary workout={sel} /> : <p className="muted small">記録はありません</p>}
       </section>
 
       {activeProgram && nextDay && (

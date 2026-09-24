@@ -83,3 +83,22 @@ export function workoutBodyParts(state: AppState, w: Workout): string[] {
   }
   return [...parts]
 }
+
+/** "85×5@8" 形式（自重種目は重量を省略） */
+export function formatSet(s: Pick<WorkSet, 'weight' | 'reps' | 'rpe'>, bodyweight = false): string {
+  const w = bodyweight ? (s.weight ? `+${s.weight}×` : '') : `${s.weight ?? 0}×`
+  return `${w}${s.reps ?? '-'}${s.rpe ? `@${s.rpe}` : ''}`
+}
+
+/** 指定日より前で最も新しい（種目の入った）ワークアウト */
+export function previousWorkout(state: AppState, beforeDate: string): Workout | null {
+  return sortedWorkouts(state).filter((w) => w.date < beforeDate && w.exercises.length).at(-1) ?? null
+}
+
+/** 種目を含む過去のワークアウト（新しい順） */
+export function recentWorkoutsWith(state: AppState, exerciseId: string, beforeDate: string, limit: number): Workout[] {
+  return sortedWorkouts(state)
+    .filter((w) => w.date < beforeDate && w.exercises.some((e) => e.exerciseId === exerciseId))
+    .reverse()
+    .slice(0, limit)
+}

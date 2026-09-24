@@ -3,11 +3,13 @@ import { mutate, useAppState } from '../lib/store'
 import { uid } from '../lib/id'
 import { formatDateJa } from '../lib/date'
 import { RPE_DESCRIPTIONS, RPE_OPTIONS, estimate1RM, suggestWeight } from '../lib/rpe'
-import { isRecorded, previousSession, referenceE1RM, setE1RM } from '../lib/stats'
+import { formatSet, isRecorded, previousSession, previousWorkout, recentWorkoutsWith, referenceE1RM, setE1RM } from '../lib/stats'
 import type { AppState, SetTarget, WorkSet, Workout, WorkoutExercise } from '../lib/types'
 import { NumInput } from '../components/NumInput'
 import { ExercisePicker } from '../components/ExercisePicker'
 import { startRest } from '../components/RestTimer'
+import { Modal } from '../components/Modal'
+import { WorkoutSummary } from '../components/WorkoutSummary'
 
 export function emptyWorkout(date: string): Workout {
   return { id: uid(), date, note: '', bodyWeight: null, exercises: [] }
@@ -25,6 +27,11 @@ function emptySet(prev?: WorkSet): WorkSet {
   }
   if (prev?.target) set.target = { ...prev.target }
   return set
+}
+
+/** セットの値（未入力ならヒント） */
+function valuesOf(s: WorkSet) {
+  return { weight: s.weight ?? s.hint?.weight ?? null, reps: s.reps ?? s.hint?.reps ?? null, rpe: s.rpe ?? s.hint?.rpe ?? null }
 }
 
 /** ワークアウトを取得（なければ作成）して編集する */
@@ -48,6 +55,8 @@ export function WorkoutView({ date, onBack }: { date: string; onBack: () => void
   const state = useAppState()
   const workout = state.workouts[date]
   const [picking, setPicking] = useState(false)
+  const [showPrevWorkout, setShowPrevWorkout] = useState(false)
+  const prevWorkout = previousWorkout(state, date)
   const program = workout?.programId ? state.programs.find((p) => p.id === workout.programId) : undefined
   const day = program?.days.find((d) => d.id === workout?.programDayId)
 
@@ -92,6 +101,16 @@ export function WorkoutView({ date, onBack }: { date: string; onBack: () => void
           📋 {program.name}
           {day && ` / ${day.name}`}
         </div>
+      )}
+
+      {prevWorkout && (
+        <section className="card prev-workout">
+          <button className="row linklike plain" onClick={() => setShowPrevWorkout((v) => !v)}>
+            <span>🕘 前回のトレーニング {formatDateJa(prevWorkout.date)}</span>
+            <span className="push-right muted">{showPrevWorkout ? '▲' : '▼'}</span>
+          </button>
+          {showPrevWorkout && <WorkoutSummary workout={prevWorkout} />}
+        </section>
       )}
 
       {workout && workout.exercises.length > 0 && (
@@ -147,6 +166,7 @@ function ExerciseCard({ date, we, index, count }: { date: string; we: WorkoutExe
   const ex = state.exercises.find((e) => e.id === we.exerciseId)
   const prev = previousSession(state, we.exerciseId, date)
   const [showRpeHelp, setShowRpeHelp] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
 
   const edit = (fn: (we: WorkoutExercise) => void) =>
     editWorkout(date, (w) => {
@@ -173,6 +193,20 @@ function ExerciseCard({ date, we, index, count }: { date: string; we: WorkoutExe
     })
     if (willBeDone && state.settings.autoRestTimer) startRest(state.settings.restSeconds)
   }
+
+  const copyFromPrevSet = (i: number) =>
+    edit((e) => {
+      const src = e.sets[i - 1]
+      if (src) Object.assign(e.sets[i], valuesOf(src))
+    })
+
+  const duplicateLastSet = () =>
+    edit((e) => {
+      const last = e.sets.at(-1)
+      const set = emptySet(last)
+      if (last) Object.assign(set, valuesOf(last))
+      e.sets.push(set)
+    })
 
   const best = we.sets.filter((s) => isRecorded(s, ex)).reduce((m, s) => Math.max(m, setE1RM(s)), 0)
 
@@ -222,10 +256,12 @@ function ExerciseCard({ date, we, index, count }: { date: string; we: WorkoutExe
       </div>
 
       {prev && (
-        <p className="prev small">
-          前回 {prev.date.slice(5).replace('-', '/')}：
-          {prev.sets.map((s) => `${ex?.bodyweight ? '' : `${s.weight}×`}${s.reps}${s.rpe ? `@${s.rpe}` : ''}`).join(', ')}
-        </p>
+        <button className="prev small" onClick={() => setShowHistory(true)}>
+          <span>
+            前回 {prev.date.slice(5).replace('-', '/')}：{prev.sets.map((s) => formatSet(s, ex?.bodyweight)).join(', ')}
+          </span>
+          <span className="prev-more">履歴 ›</span>
+        </button>
       )}
 
       <div className="set-table">
@@ -287,19 +323,31 @@ function ExerciseCard({ date, we, index, count }: { date: string; we: WorkoutExe
                   ✓
                 </button>
               </div>
-              {s.target && (
-                <div className="target small">
-                  目標 {targetLabel(s.target)}
-                  {sug != null && !s.done && (
-                    <>
-                      {' '}→ 推奨 <b>{sug}kg</b>
-                    </>
-                  )}
-                  {s.done && s.target.rpe != null && s.rpe != null && s.rpe !== s.target.rpe && (
-                    <span className={s.rpe > s.target.rpe ? 'warn' : 'good'}>
-                      {' '}
-                      （目標RPE{s.rpe > s.target.rpe ? '超過' : '未満'}）
-                    </span>
+              {(s.target || prev?.sets[i] || i > 0) && (
+                <div className="set-sub small">
+                  <div className="set-sub-info">
+                    {prev?.sets[i] && <span className="muted">前回 {formatSet(prev.sets[i], ex?.bodyweight)}</span>}
+                    {s.target && (
+                      <span className="target">
+                        目標 {targetLabel(s.target)}
+                        {sug != null && !s.done && (
+                          <>
+                            {' '}→ 推奨 <b>{sug}kg</b>
+                          </>
+                        )}
+                        {s.done && s.target.rpe != null && s.rpe != null && s.rpe !== s.target.rpe && (
+                          <span className={s.rpe > s.target.rpe ? 'warn' : 'good'}>
+                            {' '}
+                            （目標RPE{s.rpe > s.target.rpe ? '超過' : '未満'}）
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </div>
+                  {i > 0 && !s.done && (
+                    <button className="copy-btn" onClick={() => copyFromPrevSet(i)} aria-label={`${i}セット目の値をコピー`}>
+                      ⧉ 前セット
+                    </button>
                   )}
                 </div>
               )}
@@ -322,14 +370,53 @@ function ExerciseCard({ date, we, index, count }: { date: string; we: WorkoutExe
         <button className="btn small" onClick={() => edit((e) => void e.sets.push(emptySet(e.sets.at(-1))))}>
           ＋ セット
         </button>
-        {best > 0 && <span className="muted small push-right">本日の推定1RM {Math.round(best * 10) / 10}kg</span>}
+        {we.sets.length > 0 && (
+          <button className="btn small" onClick={duplicateLastSet}>
+            ⧉ 前セットをコピーして追加
+          </button>
+        )}
       </div>
+      {best > 0 && <span className="muted small">本日の推定1RM {Math.round(best * 10) / 10}kg</span>}
       <input
         className="note-input"
         placeholder="種目メモ（フォーム・セッティングなど）"
         value={we.note}
         onChange={(e) => edit((x) => void (x.note = e.target.value))}
       />
+      {showHistory && (
+        <ExerciseHistoryModal exerciseId={we.exerciseId} date={date} onClose={() => setShowHistory(false)} />
+      )}
     </section>
+  )
+}
+
+/** 種目の過去の記録（直近10回） */
+function ExerciseHistoryModal({ exerciseId, date, onClose }: { exerciseId: string; date: string; onClose: () => void }) {
+  const state = useAppState()
+  const ex = state.exercises.find((e) => e.id === exerciseId)
+  const workouts = recentWorkoutsWith(state, exerciseId, date, 10)
+  return (
+    <Modal title={`${ex?.name ?? ''} の履歴`} onClose={onClose}>
+      {workouts.map((w) => {
+        const wes = w.exercises.filter((e) => e.exerciseId === exerciseId)
+        const sets = wes.flatMap((e) => e.sets).filter((s) => isRecorded(s, ex))
+        const best = sets.reduce((m, s) => Math.max(m, setE1RM(s)), 0)
+        return (
+          <div key={w.id} className="history-item">
+            <div className="row">
+              <b>{formatDateJa(w.date)}</b>
+              {best > 0 && <span className="muted small push-right">e1RM {Math.round(best * 10) / 10}kg</span>}
+            </div>
+            <ol className="history-sets">
+              {sets.map((s) => (
+                <li key={s.id}>{formatSet(s, ex?.bodyweight)}</li>
+              ))}
+            </ol>
+            {wes.map((e) => e.note && <p key={e.id} className="small muted">📝 {e.note}</p>)}
+          </div>
+        )
+      })}
+      {workouts.length === 0 && <p className="muted empty">過去の記録はありません</p>}
+    </Modal>
   )
 }
